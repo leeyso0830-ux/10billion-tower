@@ -1,0 +1,119 @@
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+import plotly.express as px
+
+# ---------------------------------------------------------
+# [기본 설정] 페이지 타이틀 및 레이아웃
+# ---------------------------------------------------------
+st.set_page_config(page_title="10억 관제탑", page_icon="🚀", layout="wide")
+
+st.title("🚀 10억 달성 통합 관제 시스템 (V1.1)")
+st.markdown("---")
+
+# ---------------------------------------------------------
+# [사이드바] 사용자 입력 (자산 현황)
+# ---------------------------------------------------------
+with st.sidebar:
+    st.header("📝 자산 현황 입력")
+    
+    # 1. 투자금 입력
+    new_cash = st.number_input("💰 이번 달 신규 투자금 (월급 등)", value=1500000, step=10000)
+    
+    st.markdown("---")
+    st.subheader("🏦 현금성 자산")
+    # [V1.1 추가] CMA/파킹통장 입력
+    cur_cma = st.number_input("0. CMA/파킹통장 (현금)", value=0, step=10000)
+
+    st.subheader("📊 투자 자산 (평가금액)")
+    
+    # 2. 투자 자산별 현재 평가금액 입력
+    cur_tech = st.number_input("1. 테크 Top 10 (원)", value=0, step=10000)
+    cur_snp = st.number_input("2. S&P 500 (원)", value=0, step=10000)
+    cur_div = st.number_input("3. 배당 성장 (원)", value=0, step=10000)
+    cur_coin = st.number_input("4. 비트코인 (원)", value=0, step=10000)
+
+    # 환율 정보 자동 호출
+    try:
+        exchange_rate = yf.Ticker("KRW=X").history(period="1d")['Close'].iloc[-1]
+        st.success(f"🇺🇸 현재 환율: {exchange_rate:,.2f} 원/$")
+    except:
+        st.warning("환율 정보 호출 실패 (인터넷 확인)")
+
+# ---------------------------------------------------------
+# [메인] 데이터 처리 및 리밸런싱 로직
+# ---------------------------------------------------------
+
+# 목표 비중 (투자 자산 4:3:2:1)
+targets = {
+    "테크 Top 10": 0.40,
+    "S&P 500": 0.30,
+    "배당 성장": 0.20,
+    "비트코인": 0.10
+}
+
+# 계산 로직
+invest_holdings = [cur_tech, cur_snp, cur_div, cur_coin] # 투자 자산만
+invest_total = sum(invest_holdings) # 투자 자산 합계
+total_net_worth = invest_total + cur_cma # [V1.1] 총 자산 (CMA 포함)
+
+# 리밸런싱 계산 (투자 자산 + 신규 투자금 기준)
+final_invest_total = invest_total + new_cash
+
+data = []
+for i, (name, ratio) in enumerate(targets.items()):
+    cur_val = invest_holdings[i]
+    target_val = final_invest_total * ratio
+    diff = target_val - cur_val
+    
+    action = "유지"
+    
+    if diff > 0:
+        action = f"✅ {diff:,.0f}원 매수"
+    elif diff < 0:
+        action = f"🔻 {abs(diff):,.0f}원 매도/홀딩"
+        
+    data.append([name, cur_val, ratio, target_val, diff, action])
+
+df = pd.DataFrame(data, columns=["자산명", "현재보유", "목표비중", "목표금액", "차액", "지침"])
+
+# ---------------------------------------------------------
+# [시각화] 대시보드 화면 구성
+# ---------------------------------------------------------
+
+# 1. 요약 메트릭 (최상단 강조)
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("💎 총 순자산 (CMA 포함)", f"{total_net_worth:,.0f} 원")
+col2.metric("📈 총 운용 자산 (투자)", f"{invest_total:,.0f} 원")
+col3.metric("💰 CMA (비상금/대기)", f"{cur_cma:,.0f} 원")
+col4.metric("➕ 투입 예정", f"{new_cash:,.0f} 원")
+
+# 2. 리밸런싱 주문표
+st.subheader("📋 리밸런싱 주문표 (4:3:2:1)")
+st.caption("※ CMA 현금은 리밸런싱 계산에서 제외하고, 순수 투자 자산 비율만 맞춥니다.")
+st.dataframe(
+    df[["자산명", "현재보유", "목표금액", "지침"]].style.format({
+        "현재보유": "{:,.0f}원",
+        "목표금액": "{:,.0f}원"
+    }),
+    use_container_width=True,
+    height=200
+)
+
+# 3. 시각화 (차트)
+st.subheader("📈 포트폴리오 분석")
+c1, c2 = st.columns(2)
+
+with c1:
+    # [V1.1 수정] CMA를 포함한 전체 자산 구성 파이차트
+    all_assets_labels = list(targets.keys()) + ["CMA (현금)"]
+    all_assets_values = invest_holdings + [cur_cma]
+    
+    fig_pie = px.pie(values=all_assets_values, names=all_assets_labels, title="전체 자산 구성 (CMA 포함)")
+    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+with c2:
+    # 목표 vs 현재 바 차트 (투자 자산만)
+    fig_bar = px.bar(df, x="자산명", y=["현재보유", "목표금액"], barmode="group", title="투자 목표 달성 현황")
+    st.plotly_chart(fig_bar, use_container_width=True)
